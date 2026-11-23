@@ -220,6 +220,10 @@ def draw_hero(img, d):
     # fire glow on the overlay (translucent), then flames on top
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     od = ImageDraw.Draw(ov)
+    # R6: soft outer halo so the fire reads as a light source, not a
+    # flat cut-out — faint, kept low so it never reaches the headline
+    od.ellipse([320, 310, 720, 482], fill=(240, 130, 40, 14))
+    od.ellipse([355, 335, 675, 472], fill=(245, 150, 50, 20))
     od.ellipse([360, 350, 620, 465], fill=(240, 130, 40, 35))
     od.ellipse([400, 380, 580, 458], fill=(250, 180, 60, 50))
     img.paste(Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB"),
@@ -228,16 +232,31 @@ def draw_hero(img, d):
     flame(d, 470, 452, 38, 88)
     flame(d, 540, 452, 46, 108)
     flame(d, 600, 452, 32, 70)
-    # black smoke columns drifting left
-    smoke(d, 500, 330, 20, (52, 52, 58))
-    smoke(d, 560, 315, 17, (62, 62, 66))
-    # mine blast: water plume at left, white spray + orange core
-    for dx, dy, r, c in ((150, 430, 26, (235, 240, 245)),
-                         (128, 442, 18, (225, 232, 238)),
-                         (176, 444, 16, (225, 232, 238)),
-                         (150, 408, 14, (240, 150, 60)),
-                         (150, 424, 10, (250, 200, 90))):
+    # R6: smoke columns ANCHORED on the flames — each column's lowest
+    # puff sits inside its flame, then rises drifting left (wind) and
+    # lightening as it cools, so nothing reads as a floating cloud.
+    # Text is drawn after the smoke, so headline/dek stay crisp on top.
+    smoke(d, 535, 405, 15, (46, 46, 50))
+    smoke(d, 520, 362, 16, (54, 54, 58))
+    smoke(d, 498, 322, 17, (64, 64, 68))
+    smoke(d, 470, 286, 15, (76, 76, 80))
+    smoke(d, 440, 256, 13, (88, 88, 92))
+    smoke(d, 598, 412, 12, (48, 48, 52))
+    smoke(d, 582, 378, 13, (58, 58, 62))
+    smoke(d, 560, 344, 13, (70, 70, 74))
+    # R6: mine blast reshaped from a "burning cloud" into a water
+    # plume — narrow white spray, flash low at the waterline, foam ring
+    for dx, dy, r, c in ((150, 436, 16, (235, 240, 245)),
+                         (132, 444, 12, (225, 232, 238)),
+                         (170, 444, 11, (225, 232, 238)),
+                         (150, 440, 7, (240, 150, 60)),
+                         (150, 448, 5, (250, 200, 90))):
         d.ellipse([dx - r, dy - r, dx + r, dy + r], fill=c)
+    for sx, sy, sr in ((138, 398, 3), (162, 392, 3), (150, 384, 2),
+                       (126, 412, 2), (176, 410, 2)):
+        d.ellipse([sx - sr, sy - sr, sx + sr, sy + sr],
+                  fill=(235, 240, 245))
+    d.ellipse([128, 446, 172, 458], outline=(235, 240, 245), width=2)
     d.polygon([(128, 452), (142, 396), (152, 452)], fill=(235, 240, 245))
     d.polygon([(158, 452), (168, 410), (176, 452)], fill=(225, 232, 238))
     # orange reflections on the sea under the fire
@@ -329,20 +348,67 @@ def draw_libya(d, x0, y0, x1, y1):
     d.rectangle([x0, y0, x1, y0 + 84], fill=(206, 216, 224))
     # sea
     d.rectangle([x0, y0 + 56, x1, y0 + 84], fill=(158, 180, 196))
-    # capsized corvette, listing hard to starboard
+    # R6: capsized corvette redrawn as a WARSHIP — bridge tower with
+    # lit windows, funnel, mast + red ensign, forward gun turret,
+    # tegas stern transom, hull plating seams + waterline stripe.
+    # Same tilt, same panel, same fire-at-waterline + smoke.
     hull = [(x0 + 130, y0 + 62), (x0 + 330, y0 + 26), (x0 + 368, y0 + 42),
             (x0 + 345, y0 + 60), (x0 + 165, y0 + 80)]
     d.polygon(hull, fill=(96, 104, 112))
+    # darker lower strake + red waterline stripe along the bottom edge
+    d.polygon([(x0 + 150, y0 + 70), (x0 + 338, y0 + 52), (x0 + 345, y0 + 60),
+               (x0 + 165, y0 + 80)], fill=(74, 80, 88))
+    d.line([(x0 + 140, y0 + 66), (x0 + 342, y0 + 54)], fill=(150, 60, 45),
+           width=3)
+    # deck edge + bow edge highlight + hull plating seams (follow the list)
+    d.line([(x0 + 130, y0 + 62), (x0 + 330, y0 + 26)], fill=(60, 66, 74),
+           width=2)
+    d.line([(x0 + 330, y0 + 26), (x0 + 368, y0 + 42)], fill=(150, 156, 164),
+           width=2)
+    for sx, sy0, sy1 in ((180, 53, 78), (225, 45, 73), (270, 37, 68),
+                         (310, 30, 64)):
+        d.line([(x0 + sx, y0 + sy0), (x0 + sx + 6, y0 + sy1)],
+               fill=(70, 76, 84), width=1)
+    # rust streaks weeping from the deck edge
+    for rx, ry in ((195, 50), (290, 33)):
+        d.line([(x0 + rx, y0 + ry), (x0 + rx, y0 + ry + 8)],
+               fill=(140, 80, 50), width=2)
     d.polygon([(x0 + 300, y0 + 36), (x0 + 330, y0 + 26), (x0 + 348, y0 + 42),
                (x0 + 318, y0 + 48)], fill=(140, 60, 45))
-    d.rectangle([x0 + 250, y0 + 22, x0 + 268, y0 + 44], fill=(120, 126, 132))
-    # tilted mast
-    d.line([(x0 + 300, y0 + 30), (x0 + 322, y0 + 8)], fill=(70, 76, 84),
+    # stern transom: thick dark edge + deck rail posts at the low end
+    d.line([(x0 + 130, y0 + 62), (x0 + 165, y0 + 80)], fill=(48, 52, 60),
+           width=4)
+    d.line([(x0 + 140, y0 + 60), (x0 + 140, y0 + 53)], fill=(60, 66, 74),
+           width=2)
+    d.line([(x0 + 156, y0 + 57), (x0 + 156, y0 + 50)], fill=(60, 66, 74),
+           width=2)
+    d.line([(x0 + 138, y0 + 53), (x0 + 158, y0 + 49)], fill=(60, 66, 74),
+           width=2)
+    # bridge tower with lit windows + dark roof band
+    d.rectangle([x0 + 232, y0 + 14, x0 + 282, y0 + 46], fill=(88, 96, 104))
+    d.rectangle([x0 + 232, y0 + 14, x0 + 282, y0 + 19], fill=(66, 72, 80))
+    for wx in (238, 250, 262, 274):
+        d.rectangle([x0 + wx, y0 + 23, x0 + wx + 7, y0 + 30],
+                    fill=(240, 200, 90))
+    d.rectangle([x0 + 238, y0 + 34, x0 + 276, y0 + 42], fill=(70, 76, 84))
+    # funnel aft of the bridge, black cap
+    d.rectangle([x0 + 288, y0 + 24, x0 + 306, y0 + 44], fill=(96, 100, 106))
+    d.rectangle([x0 + 288, y0 + 24, x0 + 306, y0 + 29], fill=(40, 44, 50))
+    # forward gun turret on the foredeck + barrel
+    d.polygon([(x0 + 302, y0 + 32), (x0 + 324, y0 + 28), (x0 + 328, y0 + 20),
+               (x0 + 306, y0 + 24)], fill=(70, 76, 84))
+    d.line([(x0 + 324, y0 + 23), (x0 + 340, y0 + 14)], fill=(60, 66, 74),
            width=3)
-    # fire at the waterline + smoke
+    # mast on the bridge tower + small red ensign
+    d.line([(x0 + 258, y0 + 14), (x0 + 276, y0 + 1)], fill=(60, 66, 74),
+           width=3)
+    d.polygon([(x0 + 276, y0 + 1), (x0 + 276, y0 + 11), (x0 + 292, y0 + 6)],
+              fill=RED)
+    # fire at the waterline (stern) + smaller fire at the bow waterline
     flame(d, x0 + 180, y0 + 66, 26, 34)
-    smoke(d, x0 + 200, y0 + 30, 14, (90, 92, 96))
-    smoke(d, x0 + 330, y0 + 22, 12, (96, 98, 102))
+    flame(d, x0 + 338, y0 + 60, 14, 22)
+    smoke(d, x0 + 195, y0 + 40, 13, (90, 92, 96))
+    smoke(d, x0 + 336, y0 + 30, 11, (96, 98, 102))
     # drone silhouette with trail
     d.ellipse([x0 + 410, y0 + 14, x0 + 424, y0 + 22], fill=(40, 44, 50))
     d.line([(x0 + 380, y0 + 10), (x0 + 410, y0 + 18)], fill=(120, 126, 132),
