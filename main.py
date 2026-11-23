@@ -1,88 +1,83 @@
 #!/usr/bin/env python3
-"""news-image-20261123 R5 — copy the pre-rendered entry.png to the output.
+"""news-image-20261123 (Cairo renderer) — copy entry.png to output dir.
 
-Stdlib only. Verifies size (<= 1 MiB), SHA-256 and PNG SOI/EOI markers
-both before and after the chunked copy, so a truncated or corrupt file
-can never pass silently.
+Stdlib only. Verifies size <= 1 MiB + SHA-256 + SOI/EOI BEFORE and AFTER
+the chunked copy (64 KiB chunks). Samefile + output-dir guards.
 """
 import hashlib
 import os
 import sys
 
-MAX_BYTES = 1048576
+EXPECTED_SHA256 = "a311a7b6df4b0ecf592c85899ff4b28bb99122fa32ccc968fd09c8f1a357ce4c"
+EXPECTED_SIZE = 280568
+MAX_SIZE = 1048576
 CHUNK = 65536
-PNG_SOI = b"\x89PNG\r\n\x1a\n"
-PNG_EOI = b"IEND"
 
 
 def fail(msg):
-    sys.stderr.write("main.py: error: %s\n" % msg)
+    print("FAIL: " + msg, file=sys.stderr)
     sys.exit(1)
 
 
-def sha256_of(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while True:
-            data = f.read(CHUNK)
-            if not data:
-                break
-            h.update(data)
-    return h.hexdigest()
-
-
-def check_png(path):
-    """Return (size, sha256) after verifying PNG structure markers."""
+def check(path, label):
     try:
         size = os.path.getsize(path)
     except OSError as e:
-        fail("cannot stat %s: %s" % (path, e))
-    if size > MAX_BYTES:
-        fail("%s is %d bytes, over the 1 MiB limit" % (path, size))
-    if size < 8 + 12:
-        fail("%s is too small to be a PNG (%d bytes)" % (path, size))
-    with open(path, "rb") as f:
-        head = f.read(8)
-        f.seek(-12, os.SEEK_END)
-        tail = f.read(12)
-    if head != PNG_SOI:
-        fail("%s does not start with the PNG signature" % path)
-    if tail[4:8] != PNG_EOI:
-        fail("%s does not end with the PNG IEND chunk" % path)
-    return size, sha256_of(path)
+        fail(label + ": cannot stat: " + str(e))
+    if size > MAX_SIZE:
+        fail(label + ": size %d > 1 MiB" % size)
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            head = f.read(2)
+            f.seek(0)
+            while True:
+                data = f.read(CHUNK)
+                if not data:
+                    break
+                h.update(data)
+            f.seek(-2, os.SEEK_END)
+            tail = f.read(2)
+    except OSError as e:
+        fail(label + ": cannot read: " + str(e))
+    if head != b"\x89\x50":
+        fail(label + ": bad SOI marker")
+    if tail != b"\x60\x82":
+        fail(label + ": bad EOI marker")
+    digest = h.hexdigest()
+    if digest != EXPECTED_SHA256:
+        fail(label + ": sha256 mismatch: " + digest)
+    if size != EXPECTED_SIZE:
+        fail(label + ": size mismatch: %d != %d" % (size, EXPECTED_SIZE))
+    return size
 
 
 def main():
-    here = os.path.dirname(os.path.abspath(__file__))
-    src = os.path.join(here, "entry.png")
-    outdir = os.environ.get("MAKEFUN_OUTPUT_DIR", "out")
-    if not outdir:
-        fail("MAKEFUN_OUTPUT_DIR is empty")
-    if not os.path.isdir(outdir):
-        try:
-            os.makedirs(outdir)
-        except OSError as e:
-            fail("cannot create output dir %s: %s" % (outdir, e))
-    dst = os.path.join(outdir, "entry.png")
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "entry.png")
+    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "")
+    if not out_dir:
+        fail("MAKEFUN_OUTPUT_DIR is not set")
+    if not os.path.isdir(out_dir):
+        fail("output dir does not exist: " + out_dir)
+    dst = os.path.join(out_dir, "entry.png")
     if os.path.abspath(src) == os.path.abspath(dst):
         fail("source and destination are the same file")
+    if os.path.exists(dst) and os.path.samefile(src, dst):
+        fail("source and destination are the same file")
+    check(src, "source")
     try:
-        if os.path.samefile(src, dst):
-            fail("source and destination are the same file")
-    except OSError:
-        pass  # dst does not exist yet: expected on a fresh run
-    src_size, src_sha = check_png(src)
-    with open(src, "rb") as fin, open(dst, "wb") as fout:
-        while True:
-            data = fin.read(CHUNK)
-            if not data:
-                break
-            fout.write(data)
-    dst_size, dst_sha = check_png(dst)
-    if dst_size != src_size or dst_sha != src_sha:
-        fail("copy mismatch: src %d bytes %s, dst %d bytes %s"
-             % (src_size, src_sha, dst_size, dst_sha))
-    print("wrote %s (%d bytes, sha256 %s)" % (dst, dst_size, dst_sha))
+        with open(src, "rb") as fin, open(dst, "wb") as fout:
+            while True:
+                data = fin.read(CHUNK)
+                if not data:
+                    break
+                fout.write(data)
+    except OSError as e:
+        fail("copy failed: " + str(e))
+    check(dst, "output")
+    print("OK: entry.png (%d bytes, sha256 %s)" % (EXPECTED_SIZE,
+                                                   EXPECTED_SHA256))
 
 
 if __name__ == "__main__":

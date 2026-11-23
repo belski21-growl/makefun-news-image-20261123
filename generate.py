@@ -1,576 +1,810 @@
 #!/usr/bin/env python3
-"""R5 blind rewrite — news-image-20261123.
-
-One dominant tall hero (Hormuz night, ~350px), 2 mid heroes, 4 big
-secondary panels, dotted world map + ALSO ON in a narrower bottom band.
-35 stories, all reported / still developing on Monday 23 November 2026.
-Drawn from scratch with PIL + DejaVu only. No network.
+"""news-image-20261123 — Cairo renderer (eksperimen vs R5 PIL).
+Deterministik, tanpa network. Render: python3 generate_cairo.py
+Output: entry.png 1024x1024.
 """
 import math
-import os
 import random
-
-from PIL import Image, ImageDraw, ImageFont
+import cairo
 
 W, H = 1024, 1024
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "entry.png")
-
-CREAM = (247, 241, 222)
-PAPER = (252, 248, 236)
-INK = (17, 17, 17)
-GREY = (90, 84, 70)
-NAVY = (14, 42, 78)
-NAVY_D = (10, 25, 48)
-RED = (176, 30, 36)
-RED_D = (140, 22, 28)
-LINE = (201, 191, 165)
-WHITE = (255, 255, 255)
-SKY_PALE = (216, 228, 238)
-
-FD = "/usr/share/fonts/truetype/dejavu"
 
 
-def F(name, size):
-    for cand in (name, "DejaVuSans.ttf", "DejaVuSerif.ttf"):
-        p = os.path.join(FD, cand)
-        if os.path.exists(p):
-            return ImageFont.truetype(p, size)
-    return ImageFont.load_default()
+def C(r, g, b):
+    return (r / 255.0, g / 255.0, b / 255.0)
 
 
-def serif_b(s):
-    return F("DejaVuSerif-Bold.ttf", s)
+def CA(r, g, b, a):
+    return (r / 255.0, g / 255.0, b / 255.0, a)
 
 
-def serif(s):
-    return F("DejaVuSerif.ttf", s)
+CREAM = C(247, 241, 222)
+PAPER = C(252, 248, 236)
+INK = C(17, 17, 17)
+GREY = C(90, 84, 70)
+NAVY = C(14, 42, 78)
+NAVY_D = C(10, 25, 48)
+RED = C(176, 30, 36)
+RED_D = C(140, 22, 28)
+LINE = C(201, 191, 165)
+WHITE = C(255, 255, 255)
+SKY_PALE = C(216, 228, 238)
+DEK = C(52, 48, 40)
 
 
-def serif_i(s):
-    return F("DejaVuSerif-Italic.ttf", s)
+def rect(ctx, x, y, w, h, color, lw=0):
+    ctx.save()
+    ctx.set_source_rgb(*color)
+    ctx.rectangle(x, y, w, h)
+    ctx.fill()
+    ctx.restore()
 
 
-def sans_b(s):
-    return F("DejaVuSans-Bold.ttf", s)
+def rounded_rect_path(ctx, x, y, w, h, r):
+    ctx.new_path()
+    ctx.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+    ctx.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+    ctx.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+    ctx.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
+    ctx.close_path()
 
 
-def sans(s):
-    return F("DejaVuSans.ttf", s)
+def chip(ctx, x, y, text, size, bg, fg, bold=True):
+    """Kotak rounded + teks; kembalikan lebar chip."""
+    ctx.save()
+    ctx.select_font_face("DejaVu Sans",
+                         cairo.FONT_SLANT_NORMAL,
+                         cairo.FONT_WEIGHT_BOLD if bold
+                         else cairo.FONT_WEIGHT_NORMAL)
+    ctx.set_font_size(size)
+    tw = ctx.text_extents(text)[2]
+    pad, h = 6, size + 10
+    rounded_rect_path(ctx, x, y, tw + pad * 2, h, 4)
+    ctx.set_source_rgb(*bg)
+    ctx.fill()
+    ctx.set_source_rgb(*fg)
+    ctx.move_to(x + pad, y + 5 + ctx.font_extents()[0])
+    ctx.show_text(text)
+    ctx.restore()
+    return tw + pad * 2
 
 
-def wrap(text, font, maxw):
-    words = text.split()
+def set_font(ctx, family, size, bold=False, italic=False):
+    ctx.select_font_face(
+        family,
+        cairo.FONT_SLANT_ITALIC if italic else cairo.FONT_SLANT_NORMAL,
+        cairo.FONT_WEIGHT_BOLD if bold else cairo.FONT_WEIGHT_NORMAL)
+    ctx.set_font_size(size)
+
+
+def text_w(ctx, s, family, size, bold=False, italic=False):
+    set_font(ctx, family, size, bold, italic)
+    return ctx.text_extents(s)[2]
+
+
+def draw_text(ctx, x, y_top, s, family, size, color,
+              bold=False, italic=False, align="left"):
+    """y_top = koordinat atas (gaya PIL); konversi ke baseline."""
+    ctx.save()
+    set_font(ctx, family, size, bold, italic)
+    ascent = ctx.font_extents()[0]
+    w = ctx.text_extents(s)[2]
+    if align == "center":
+        x = x - w / 2.0
+    elif align == "right":
+        x = x - w
+    ctx.set_source_rgb(*color)
+    ctx.move_to(x, y_top + ascent)
+    ctx.show_text(s)
+    ctx.restore()
+
+
+def wrap_lines(ctx, s, family, size, max_w, bold=False, italic=False):
+    set_font(ctx, family, size, bold, italic)
     lines, cur = [], ""
-    for w in words:
-        t = (cur + " " + w).strip()
-        if font.getlength(t) <= maxw or not cur:
-            cur = t
+    for word in s.split(" "):
+        trial = word if not cur else cur + " " + word
+        if ctx.text_extents(trial)[2] <= max_w or not cur:
+            cur = trial
         else:
             lines.append(cur)
-            cur = w
+            cur = word
     if cur:
         lines.append(cur)
     return lines
 
 
-def vgrad(d, box, top, bot):
-    x0, y0, x1, y1 = box
-    n = max(1, y1 - y0)
-    for i in range(n):
-        t = i / n
-        c = tuple(int(top[j] + (bot[j] - top[j]) * t) for j in range(3))
-        d.line([(x0, y0 + i), (x1, y0 + i)], fill=c)
+def draw_wrapped(ctx, x, y_top, s, family, size, color, max_w,
+                 lh, bold=False, italic=False):
+    lines = wrap_lines(ctx, s, family, size, max_w, bold, italic)
+    for i, ln in enumerate(lines):
+        draw_text(ctx, x, y_top + i * lh, ln, family, size, color,
+                  bold, italic)
+    return len(lines)
 
 
-def chip(d, x, y, text, bg, fg, size=10, pad=5):
-    f = sans_b(size)
-    w = int(f.getlength(text)) + pad * 2
-    h = size + pad + 2
-    d.rounded_rectangle([x, y, x + w, y + h], radius=3, fill=bg)
-    d.text((x + pad, y + 2), text, font=f, fill=fg)
-    return w
+def vgrad(ctx, x0, y0, x1, y1, stops):
+    g = cairo.LinearGradient(x0, y0, x1, y1)
+    for off, col in stops:
+        g.add_color_stop_rgb(off, *col)
+    ctx.set_source(g)
+    return g
 
 
-def panel_box(d, x0, y0, x1, y1):
-    d.rectangle([x0, y0, x1, y1], outline=LINE, width=1)
+def rgrad(ctx, cx, cy, r0, r1, stops):
+    g = cairo.RadialGradient(cx, cy, r0, cx, cy, r1)
+    for off, col in stops:
+        g.add_color_stop_rgba(off, *col)
+    ctx.set_source(g)
+    return g
 
 
-def flame(d, cx, base, w, h):
-    """Layered flame: red outer, orange mid, yellow core."""
-    d.polygon([(cx - w, base), (cx - w * 0.45, base - h * 0.62),
-               (cx - w * 0.12, base - h * 0.85), (cx + w * 0.25, base - h * 0.55),
-               (cx + w * 0.85, base - h * 0.3), (cx + w, base)],
-              fill=(214, 72, 28))
-    d.polygon([(cx - w * 0.62, base), (cx - w * 0.28, base - h * 0.55),
-               (cx, base - h * 0.8), (cx + w * 0.3, base - h * 0.45),
-               (cx + w * 0.6, base)], fill=(238, 140, 40))
-    d.polygon([(cx - w * 0.34, base), (cx - w * 0.12, base - h * 0.45),
-               (cx + w * 0.08, base - h * 0.62), (cx + w * 0.3, base - h * 0.3),
-               (cx + w * 0.32, base)], fill=(248, 205, 80))
-
-
-def smoke(d, x, y, s, col=(70, 70, 74)):
-    for dx, dy, r in ((0, 0, 1.0), (0.55, -0.5, 0.8), (-0.5, -0.9, 0.85),
-                      (0.15, -1.5, 0.7), (0.7, -1.9, 0.55)):
-        rr = r * s
-        d.ellipse([x + dx * s - rr, y + dy * s - rr * 0.8,
-                   x + dx * s + rr, y + dy * s + rr * 0.8], fill=col)
-
-
-def draw_masthead(d):
-    d.rectangle([0, 0, W, 30], fill=NAVY_D)
-    d.text((12, 6), "THE WORLD IN ONE DAY", font=sans_b(16), fill=WHITE)
-    right = "35 STORIES  •  6 REGIONS  •  EVERY ONE DATED MONDAY 23 NOVEMBER 2026"
-    f = sans_b(11)
-    d.text((W - 12 - f.getlength(right), 9), right, font=f, fill=(214, 222, 235))
-
-
-def draw_date(d):
-    f = serif_b(56)
-    t = "Monday 23 November 2026"
-    d.text(((W - f.getlength(t)) / 2, 36), t, font=f, fill=INK)
-    f2 = serif_i(16)
-    t2 = ("COP31 collapses with no deal  ·  Mines hit tankers in Hormuz  ·  "
-          "Russian warship struck in Libya")
-    d.text(((W - f2.getlength(t2)) / 2, 102), t2, font=f2, fill=RED)
-
-
-def draw_stats(d):
-    stats = [
-        ("$120BN", "adaptation cash cut at COP31"),
-        ("6", "tankers Iran claims hit by mines"),
-        ("10", "injured in Libya warship strike"),
-        ("2", "killed in Dymer apartment strike"),
-        ("17.5%", "Taiwan stocks' fall in one week"),
-        ("128", "nations backing killer-robot rules"),
+def flame(ctx, cx, base_y, w, h, tilt=0.0):
+    """Satu lidah api teardrop bezier, 3 lapis. base_y = dasar api."""
+    tip_x = cx + tilt * h * 0.35
+    tip_y = base_y - h
+    layers = [
+        (1.00, C(214, 72, 28)),
+        (0.72, C(238, 140, 40)),
+        (0.45, C(248, 205, 80)),
     ]
-    x = 12
-    bw, gap = 163, 4
-    for num, cap in stats:
-        d.rectangle([x, 122, x + bw, 168], fill=PAPER, outline=LINE, width=1)
-        d.text((x + 8, 124), num, font=sans_b(19), fill=RED)
-        lines = wrap(cap, sans(8), bw - 16)
-        for i, ln in enumerate(lines[:2]):
-            d.text((x + 8, 146 + i * 10), ln, font=sans(8), fill=GREY)
-        x += bw + gap
+    for scale, col in layers:
+        ww, hh = w * scale, h * scale
+        bx = cx + (1 - scale) * w * 0.08
+        ctx.save()
+        ctx.set_source_rgb(*col)
+        ctx.new_path()
+        ctx.move_to(bx - ww / 2, base_y)
+        # sisi kiri melengkung naik ke ujung, dengan 1 lobe
+        ctx.curve_to(bx - ww * 0.62, base_y - hh * 0.35,
+                     bx - ww * 0.55, base_y - hh * 0.62,
+                     bx - ww * 0.18, base_y - hh * 0.86)
+        ctx.curve_to(bx - ww * 0.06, base_y - hh * 0.95,
+                     tip_x - (bx - tip_x) * (1 - scale) * 0.4,
+                     tip_y + hh * 0.10, tip_x, tip_y)
+        # sisi kanan turun dengan lobe kedua
+        ctx.curve_to(tip_x + ww * 0.10, tip_y + hh * 0.28,
+                     bx + ww * 0.42, base_y - hh * 0.60,
+                     bx + ww * 0.50, base_y - hh * 0.30)
+        ctx.curve_to(bx + ww * 0.55, base_y - hh * 0.12,
+                     bx + ww * 0.45, base_y - hh * 0.02,
+                     bx + ww / 2, base_y)
+        ctx.close_path()
+        ctx.fill()
+        ctx.restore()
 
 
-def draw_region_bar(d):
-    segs = [
-        ("EUROPE 6", 6, NAVY),
-        ("MIDDLE EAST 7", 7, RED),
-        ("AMERICAS 6", 6, (46, 110, 62)),
-        ("ASIA 7", 7, (196, 110, 20)),
-        ("AFRICA 6", 6, (140, 95, 45)),
-        ("GLOBAL 3", 3, (88, 70, 140)),
-    ]
-    total = 35.0
-    x = 12
-    f = sans_b(10)
-    for label, n, col in segs:
-        w = int(1000 * n / total)
-        d.rectangle([x, 170, x + w - 1, 188], fill=col)
-        tw = f.getlength(label)
-        d.text((x + (w - tw) / 2, 174), label, font=f, fill=WHITE)
+def smoke_puff(ctx, x, y, r, color, alpha):
+    """Gumpal asap tepi lembut: beberapa lingkaran radial-alpha."""
+    for dx, dy, rr, a in ((0, 0, r, alpha), (-r * 0.45, r * 0.2, r * 0.7, alpha * 0.8),
+                          (r * 0.45, -r * 0.15, r * 0.65, alpha * 0.8),
+                          (0, -r * 0.4, r * 0.6, alpha * 0.7)):
+        g = cairo.RadialGradient(x + dx, y + dy, 0, x + dx, y + dy, rr)
+        g.add_color_stop_rgba(0, color[0], color[1], color[2], a)
+        g.add_color_stop_rgba(1, color[0], color[1], color[2], 0)
+        ctx.save()
+        ctx.set_source(g)
+        ctx.arc(x + dx, y + dy, rr, 0, 2 * math.pi)
+        ctx.fill()
+        ctx.restore()
+
+
+def smoke_column(ctx, points, base_color, top_color, alpha=0.55):
+    """points: [(x,y,r), ...] pangkal->puncak; warna makin terang."""
+    n = len(points)
+    for i, (x, y, r) in enumerate(points):
+        t = i / max(1, n - 1)
+        col = tuple(bc + (tc - bc) * t
+                    for bc, tc in zip(base_color, top_color))
+        smoke_puff(ctx, x, y, r, col, alpha * (1 - 0.25 * t))
+
+
+def masthead(ctx):
+    rect(ctx, 0, 0, W, 30, NAVY_D)
+    draw_text(ctx, 12, 6, "THE WORLD IN ONE DAY", "DejaVu Sans", 16,
+              WHITE, bold=True)
+    draw_text(ctx, 1012, 9,
+              "35 STORIES  \u2022  6 REGIONS  \u2022  EVERY ONE DATED MONDAY 23 NOVEMBER 2026",
+              "DejaVu Sans", 11, C(214, 222, 235), bold=True, align="right")
+
+
+def date_block(ctx):
+    draw_text(ctx, 512, 36, "Monday 23 November 2026", "DejaVu Serif", 56,
+              INK, bold=True, align="center")
+    draw_text(ctx, 512, 102,
+              "COP31 collapses with no deal  \u00b7  Mines hit tankers in Hormuz  \u00b7  Russian warship struck in Libya",
+              "DejaVu Serif", 16, RED, italic=True, align="center")
+
+
+STATS = [
+    ("$120BN", "adaptation cash cut at COP31"),
+    ("6", "tankers Iran claims hit by mines"),
+    ("10", "injured in Libya warship strike"),
+    ("2", "killed in Dymer apartment strike"),
+    ("17.5%", "Taiwan stocks' fall in one week"),
+    ("128", "nations backing killer-robot rules"),
+]
+
+
+def stat_strip(ctx):
+    for i, (num, cap) in enumerate(STATS):
+        x = 12 + i * 167
+        rect(ctx, x, 122, 163, 46, PAPER)
+        ctx.save()
+        ctx.set_source_rgb(*LINE)
+        ctx.set_line_width(1)
+        ctx.rectangle(x + 0.5, 122.5, 163, 46)
+        ctx.stroke()
+        ctx.restore()
+        draw_text(ctx, x + 8, 124, num, "DejaVu Sans", 19, RED, bold=True)
+        draw_wrapped(ctx, x + 8, 146, cap, "DejaVu Sans", 8, GREY,
+                     163 - 16, 10)
+
+
+REGIONS = [
+    ("EUROPE", 6, NAVY), ("MIDDLE EAST", 7, RED),
+    ("AMERICAS", 6, C(46, 110, 62)), ("ASIA", 7, C(196, 110, 20)),
+    ("AFRICA", 6, C(140, 95, 45)), ("GLOBAL", 3, C(88, 70, 140)),
+]
+
+
+def region_bar(ctx):
+    x = 12.0
+    for name, n, col in REGIONS:
+        w = 1000.0 * n / 35.0
+        rect(ctx, x, 170, w, 18, col)
+        draw_text(ctx, x + w / 2, 174, "%s %d" % (name, n), "DejaVu Sans", 10,
+                  WHITE, bold=True, align="center")
         x += w
 
 
-# ---------------------------------------------------------------- hero
-# x 12..1012, y 192..542  (1000 x 350 = 34.2% of the page)
-def draw_hero(img, d):
+def hero(ctx):
     x0, y0, x1, y1 = 12, 192, 1012, 542
-    horizon = 452
-    # sky: deep navy top, fading to slate blue, then a hot orange glow band
-    vgrad(d, (x0, y0, x1, horizon - 172), (10, 27, 51), (44, 72, 108))
-    vgrad(d, (x0, horizon - 172, x1, horizon - 60), (44, 72, 108),
-          (110, 145, 180))
-    vgrad(d, (x0, horizon - 60, x1, horizon), (110, 145, 180),
-          (214, 122, 52))
-    # sea: mid steel blue (bright enough not to count as "dark" pixels)
-    vgrad(d, (x0, horizon, x1, y1), (60, 96, 126), (46, 82, 110))
-    # stars
-    rnd = random.Random(11)
+    # --- langit: gradien linear 4 stop ---
+    vgrad(ctx, 0, y0, 0, 452, [
+        (0.0, C(10, 27, 51)), (0.28, C(44, 72, 108)),
+        (0.68, C(110, 145, 180)), (1.0, C(214, 122, 52))])
+    ctx.rectangle(x0, y0, x1 - x0, 452 - y0)
+    ctx.fill()
+    # --- laut: gradien linear ---
+    vgrad(ctx, 0, 452, 0, y1, [(0.0, C(60, 96, 126)), (1.0, C(46, 82, 110))])
+    ctx.rectangle(x0, 452, x1 - x0, y1 - 452)
+    ctx.fill()
+    # --- bintang (seed 11) ---
+    rng = random.Random(11)
     for _ in range(70):
-        sx = rnd.randint(x0 + 8, x1 - 8)
-        sy = rnd.randint(y0 + 8, horizon - 110)
-        r = rnd.choice((1, 1, 2))
-        d.ellipse([sx - r, sy - r, sx + r, sy + r], fill=(220, 228, 240))
-    # moon + halo
-    d.ellipse([838, 214, 922, 298], fill=(212, 204, 170))
-    d.ellipse([852, 228, 908, 284], fill=(238, 232, 205))
-    d.ellipse([866, 240, 880, 254], fill=(210, 202, 172))
-    d.ellipse([888, 258, 898, 268], fill=(210, 202, 172))
-    # distant tanker, small, on the horizon at right
-    d.polygon([(838, 452), (838, 436), (852, 436), (852, 428), (872, 428),
-               (872, 436), (988, 436), (988, 452)], fill=(24, 40, 60))
-    d.rectangle([846, 424, 858, 436], fill=(24, 40, 60))
-    # main tanker: long black hull, bridge tower left of the fire
-    d.polygon([(170, 452), (170, 470), (196, 486), (800, 486), (826, 470),
-               (826, 452)], fill=(16, 22, 30))
-    d.rectangle([196, 470, 800, 478], fill=(120, 40, 30))
-    d.rectangle([700, 392, 762, 452], fill=(24, 32, 44))
-    for wy in (404, 420, 436):
-        for wx in (710, 728, 746):
-            d.rectangle([wx, wy, wx + 10, wy + 8], fill=(240, 200, 90))
-    d.rectangle([668, 408, 688, 452], fill=(24, 32, 44))
-    d.rectangle([668, 396, 688, 408], fill=(150, 50, 35))
-    # cargo hatches
-    for hx in (240, 330, 420, 510, 600):
-        d.rectangle([hx, 442, hx + 52, 452], fill=(34, 44, 56))
-    # fire glow on the overlay (translucent), then flames on top
-    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    od = ImageDraw.Draw(ov)
-    # R6: soft outer halo so the fire reads as a light source, not a
-    # flat cut-out — faint, kept low so it never reaches the headline
-    od.ellipse([320, 310, 720, 482], fill=(240, 130, 40, 14))
-    od.ellipse([355, 335, 675, 472], fill=(245, 150, 50, 20))
-    od.ellipse([360, 350, 620, 465], fill=(240, 130, 40, 35))
-    od.ellipse([400, 380, 580, 458], fill=(250, 180, 60, 50))
-    img.paste(Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB"),
-              (0, 0))
-    d = ImageDraw.Draw(img)
-    flame(d, 470, 452, 38, 88)
-    flame(d, 540, 452, 46, 108)
-    flame(d, 600, 452, 32, 70)
-    # R6: smoke columns ANCHORED on the flames — each column's lowest
-    # puff sits inside its flame, then rises drifting left (wind) and
-    # lightening as it cools, so nothing reads as a floating cloud.
-    # Text is drawn after the smoke, so headline/dek stay crisp on top.
-    smoke(d, 535, 405, 15, (46, 46, 50))
-    smoke(d, 520, 362, 16, (54, 54, 58))
-    smoke(d, 498, 322, 17, (64, 64, 68))
-    smoke(d, 470, 286, 15, (76, 76, 80))
-    smoke(d, 440, 256, 13, (88, 88, 92))
-    smoke(d, 598, 412, 12, (48, 48, 52))
-    smoke(d, 582, 378, 13, (58, 58, 62))
-    smoke(d, 560, 344, 13, (70, 70, 74))
-    # R6: mine blast reshaped from a "burning cloud" into a water
-    # plume — narrow white spray, flash low at the waterline, foam ring
-    for dx, dy, r, c in ((150, 436, 16, (235, 240, 245)),
-                         (132, 444, 12, (225, 232, 238)),
-                         (170, 444, 11, (225, 232, 238)),
-                         (150, 440, 7, (240, 150, 60)),
-                         (150, 448, 5, (250, 200, 90))):
-        d.ellipse([dx - r, dy - r, dx + r, dy + r], fill=c)
-    for sx, sy, sr in ((138, 398, 3), (162, 392, 3), (150, 384, 2),
-                       (126, 412, 2), (176, 410, 2)):
-        d.ellipse([sx - sr, sy - sr, sx + sr, sy + sr],
-                  fill=(235, 240, 245))
-    d.ellipse([128, 446, 172, 458], outline=(235, 240, 245), width=2)
-    d.polygon([(128, 452), (142, 396), (152, 452)], fill=(235, 240, 245))
-    d.polygon([(158, 452), (168, 410), (176, 452)], fill=(225, 232, 238))
-    # orange reflections on the sea under the fire
-    for rx, rw in ((400, 60), (470, 110), (540, 70), (430, 40)):
-        d.rectangle([rx, 492, rx + rw, 497], fill=(232, 140, 50))
-        d.rectangle([rx + 20, 508, rx + rw - 10, 512], fill=(214, 122, 52))
-    # small sea-mine silhouette floating near the hull
-    d.ellipse([620, 488, 640, 506], fill=(14, 20, 28))
-    for ang in range(0, 360, 45):
-        a = math.radians(ang)
-        d.line([(630 + 9 * math.cos(a), 497 + 8 * math.sin(a)),
-                (630 + 15 * math.cos(a), 497 + 14 * math.sin(a))],
-               fill=(14, 20, 28), width=2)
-    # ---- text on the dark sky (top-left, high contrast) ----
-    chip(d, 28, 206, "2  ·  HORMUZ — MIDDLE EAST", RED, WHITE, size=11)
-    d.text((28, 236), "Mines hit tankers in Hormuz",
-           font=serif_b(34), fill=WHITE)
-    dek = ("Iran claims two more tankers struck by sea mines, six in two "
-           "days; UKMTO reports a vessel hit by an unknown projectile. "
-           "Iran's claim is unverified.")
-    yy = 278
-    for ln in wrap(dek, sans(15), 620):
-        d.text((28, yy), ln, font=sans(15), fill=(232, 236, 242))
-        yy += 20
-    # chips + source along the bottom, over the sea
-    w1 = chip(d, 28, 506, "6 TANKERS", RED, WHITE, size=12)
-    chip(d, 28 + w1 + 8, 506, "BRENT $92.44", WHITE, INK, size=12)
-    src = "AP via OilPrice, 23 Nov"
-    f = sans(10)
-    d.text((x1 - 12 - f.getlength(src), 512), src, font=f,
-           fill=(226, 232, 240))
-    panel_box(d, x0, y0, x1, y1)
+        bx = rng.uniform(20, 1004)
+        by = rng.uniform(200, 342)
+        r = rng.uniform(1.0, 2.0)
+        ctx.save()
+        ctx.set_source_rgb(*C(220, 228, 240))
+        ctx.arc(bx, by, r, 0, 2 * math.pi)
+        ctx.fill()
+        ctx.restore()
+    # --- bulan: halo radial + cakram + kawah ---
+    rgrad(ctx, 880, 256, 0, 90, [
+        (0.0, CA(212, 204, 170, 0.55)), (0.5, CA(212, 204, 170, 0.18)),
+        (1.0, CA(212, 204, 170, 0.0))])
+    ctx.arc(880, 256, 90, 0, 2 * math.pi)
+    ctx.fill()
+    rgrad(ctx, 880, 256, 0, 28, [
+        (0.0, CA(248, 242, 218, 1.0)), (1.0, CA(226, 219, 190, 1.0))])
+    ctx.arc(880, 256, 28, 0, 2 * math.pi)
+    ctx.fill()
+    for kx, ky, kr in ((872, 248, 5), (890, 264, 4)):
+        ctx.save()
+        ctx.set_source_rgb(*C(210, 202, 172))
+        ctx.arc(kx, ky, kr, 0, 2 * math.pi)
+        ctx.fill()
+        ctx.restore()
+    # --- tanker jauh di horizon kanan ---
+    rect(ctx, 838, 436, 150, 16, C(24, 40, 60))
+    rect(ctx, 846, 424, 12, 12, C(24, 40, 60))
+    # --- tanker utama: lambung bezier ---
+    ctx.save()
+    ctx.set_source_rgb(*C(16, 22, 30))
+    ctx.new_path()
+    ctx.move_to(170, 452)
+    ctx.line_to(826, 452)
+    ctx.line_to(826, 478)
+    ctx.curve_to(700, 488, 400, 488, 300, 486)
+    ctx.curve_to(230, 484, 185, 472, 170, 452)
+    ctx.close_path()
+    ctx.fill()
+    ctx.restore()
+    rect(ctx, 170, 470, 656, 8, C(120, 40, 30))  # strip garis air
+    # anjungan + jendela menyala 3x3
+    rect(ctx, 700, 392, 62, 60, C(24, 32, 44))
+    for r in range(3):
+        for c in range(3):
+            rect(ctx, 710 + c * 18, 404 + r * 16, 10, 8, C(240, 200, 90))
+    # cerobong + atap merah
+    rect(ctx, 668, 408, 20, 44, C(24, 32, 44))
+    rect(ctx, 668, 396, 20, 12, C(150, 50, 35))
+    # 5 palka kargo
+    for i in range(5):
+        rect(ctx, 200 + i * 88, 438, 60, 14, C(34, 44, 56))
+    # --- glow radial di belakang api (tidak sampai teks) ---
+    rgrad(ctx, 520, 400, 0, 130, [
+        (0.0, CA(240, 140, 50, 0.20)), (0.5, CA(240, 140, 50, 0.08)),
+        (1.0, CA(240, 140, 50, 0.0))])
+    ctx.arc(520, 400, 130, 0, 2 * math.pi)
+    ctx.fill()
+    # --- api: 3 lidah bezier berlapis ---
+    flame(ctx, 470, 452, 38, 88, tilt=-0.12)
+    flame(ctx, 540, 452, 46, 108, tilt=0.05)
+    flame(ctx, 600, 452, 32, 70, tilt=0.15)
+    # --- asap SESUDAH api, pangkal tepat di ujung lidah (tumpang tindih
+    # ~6px, bukan di tengah badan api -> tersambung tanpa blob gelap di
+    # badan api). Kolom padat, makin terang ke atas. ---
+    smoke_column(ctx, [(535, 352, 14), (520, 330, 15), (502, 306, 16),
+                       (482, 284, 15), (460, 262, 14), (440, 244, 12)],
+                 C(46, 46, 50), C(96, 96, 100), alpha=0.45)
+    smoke_column(ctx, [(598, 388, 12), (586, 368, 13), (570, 346, 13),
+                       (554, 326, 12)],
+                 C(46, 46, 50), C(96, 96, 100), alpha=0.45)
 
 
-# ---------------------------------------------------------------- panels
-def panel_text(d, x0, y0, w, kicker, headline, dek, source, hsize=16,
-               dsize=10):
-    """Text block under a panel image. Returns nothing; caller sizes image
-    so this block fits (kicker + headline + dek + source)."""
-    x = x0 + 8
-    tw = w - 16
-    y = y0 + 4
-    d.text((x, y), kicker, font=sans_b(9), fill=RED)
+def hero_text(ctx):
+    # --- ledakan ranjau / semburan air kiri (~x150, y452) ---
+    ctx.save()
+    ctx.set_source_rgb(*C(240, 200, 90))
+    ctx.new_path()
+    ctx.move_to(138, 452); ctx.line_to(150, 424); ctx.line_to(162, 452)
+    ctx.close_path(); ctx.fill()
+    ctx.set_source_rgb(*C(248, 205, 80))
+    ctx.new_path()
+    ctx.move_to(144, 452); ctx.line_to(150, 436); ctx.line_to(156, 452)
+    ctx.close_path(); ctx.fill()
+    # dua semburan putih sempit
+    ctx.set_source_rgb(*C(255, 255, 255))
+    for sx in (128, 168):
+        ctx.new_path()
+        ctx.move_to(sx - 3, 452); ctx.line_to(sx, 414); ctx.line_to(sx + 3, 452)
+        ctx.close_path(); ctx.fill()
+    # cincin buih + tetesan
+    ctx.set_source_rgba(1, 1, 1, 0.85)
+    ctx.set_line_width(1.5)
+    ctx.new_path()
+    ctx.arc(150, 452, 22, 0, 2 * math.pi)
+    ctx.stroke()
+    for dx, dy in ((-34, -8), (36, -12), (-28, 6), (30, 4), (0, -22)):
+        ctx.arc(150 + dx, 452 + dy, 1.8, 0, 2 * math.pi)
+        ctx.fill()
+    ctx.restore()
+    # --- refleksi oranye di laut ---
+    for ry, rw, col in ((492, 180, C(232, 140, 50)), (500, 220, C(214, 122, 52)),
+                        (506, 150, C(232, 140, 50)), (512, 120, C(214, 122, 52))):
+        ctx.save()
+        ctx.set_source_rgba(col[0], col[1], col[2], 0.45)
+        ctx.rectangle(430, ry, rw, 3)
+        ctx.fill()
+        ctx.restore()
+    # --- ranjau laut (630,497) ---
+    ctx.save()
+    ctx.set_source_rgb(*C(16, 22, 30))
+    ctx.arc(630, 497, 10, 0, 2 * math.pi)
+    ctx.fill()
+    ctx.set_line_width(2)
+    for k in range(8):
+        a = k * math.pi / 4
+        ctx.move_to(630 + math.cos(a) * 9, 497 + math.sin(a) * 9)
+        ctx.line_to(630 + math.cos(a) * 15, 497 + math.sin(a) * 15)
+    ctx.stroke()
+    ctx.restore()
+    # --- teks hero (setelah asap, tetap tajam) ---
+    chip(ctx, 28, 206, "2  \u00b7  HORMUZ \u2014 MIDDLE EAST", 11, RED, WHITE)
+    draw_text(ctx, 28, 236, "Mines hit tankers in Hormuz", "DejaVu Serif",
+              34, WHITE, bold=True)
+    draw_wrapped(ctx, 28, 278,
+                 "Iran claims two more tankers struck by sea mines, six in two days; "
+                 "UKMTO reports a vessel hit by an unknown projectile. "
+                 "Iran's claim is unverified.",
+                 "DejaVu Sans", 15, C(232, 236, 242), 620, 20)
+    w1 = chip(ctx, 28, 506, "6 TANKERS", 12, RED, WHITE)
+    chip(ctx, 28 + w1 + 8, 506, "BRENT $92.44", 12, WHITE, INK)
+    draw_text(ctx, 1000, 512, "AP via OilPrice, 23 Nov", "DejaVu Sans", 10,
+              C(226, 232, 240), align="right")
+    # outline hero
+    ctx.save()
+    ctx.set_source_rgb(*LINE)
+    ctx.set_line_width(1)
+    ctx.rectangle(12.5, 192.5, 1000, 350)
+    ctx.stroke()
+    ctx.restore()
+
+
+def panel_text(ctx, x, y_img_bottom, w, kicker, headline, dek, sumber,
+               hsize=15, dsize=10):
+    """Teks panel di bawah gambar; y_img_bottom = bawah area gambar.
+    Layout ketat: kicker +11 -> headline (lh hsize+2) +2 -> dek
+    (lh dsize+2) +2 -> sumber. Mid muat 68px, secondary 84px."""
+    y = y_img_bottom + 1
+    draw_text(ctx, x + 8, y, kicker, "DejaVu Sans", 9, RED, bold=True)
     y += 11
-    for ln in wrap(headline, serif_b(hsize), tw):
-        d.text((x, y), ln, font=serif_b(hsize), fill=INK)
-        y += hsize + 2
-    y += 1
-    for ln in wrap(dek, sans(dsize), tw):
-        d.text((x, y), ln, font=sans(dsize), fill=(52, 48, 40))
-        y += dsize + 3
-    d.text((x, y), source, font=sans(8), fill=GREY)
+    n = draw_wrapped(ctx, x + 8, y, headline, "DejaVu Serif", hsize, INK,
+                     w - 16, hsize + 2, bold=True)
+    y += n * (hsize + 2) + 2
+    n = draw_wrapped(ctx, x + 8, y, dek, "DejaVu Sans", dsize, DEK,
+                     w - 16, dsize + 2)
+    y += n * (dsize + 2) + 2
+    draw_text(ctx, x + 8, y, sumber, "DejaVu Sans", 8, GREY)
 
 
-def draw_cop31(d, x0, y0, x1, y1):
-    # image 84px, text 68px
-    d.rectangle([x0, y0, x1, y0 + 84], fill=(214, 226, 236))
+def panel_outline(ctx, x, y, w, h):
+    ctx.save()
+    ctx.set_source_rgb(*LINE)
+    ctx.set_line_width(1)
+    ctx.rectangle(x + 0.5, y + 0.5, w, h)
+    ctx.stroke()
+    ctx.restore()
+
+
+def mid_cop31(ctx):
+    x, y, w = 12, 546, 496
+    rect(ctx, x, y, w, 84, C(214, 226, 236))  # langit
     # globe
-    d.ellipse([x0 + 22, y0 + 14, x0 + 92, y0 + 84], fill=(52, 110, 170))
-    d.ellipse([x0 + 36, y0 + 30, x0 + 58, y0 + 48], fill=(90, 160, 90))
-    d.ellipse([x0 + 58, y0 + 52, x0 + 80, y0 + 70], fill=(90, 160, 90))
-    d.ellipse([x0 + 44, y0 + 62, x0 + 56, y0 + 74], fill=(120, 175, 100))
-    # summit table + delegates
-    d.rectangle([x0 + 130, y0 + 62, x0 + 420, y0 + 82], fill=(122, 84, 52))
-    d.rectangle([x0 + 130, y0 + 62, x0 + 420, y0 + 68], fill=(146, 104, 66))
-    for i, c in enumerate(((176, 40, 60), (196, 120, 40), (150, 90, 170),
-                           (60, 130, 170), (200, 90, 40))):
-        cx = x0 + 165 + i * 48
-        d.ellipse([cx - 9, y0 + 34, cx + 9, y0 + 52], fill=(232, 200, 160))
-        d.polygon([(cx - 14, y0 + 62), (cx - 9, y0 + 50), (cx + 9, y0 + 50),
-                   (cx + 14, y0 + 62)], fill=c)
-    # thermometer, mercury fallen
-    d.rectangle([x0 + 446, y0 + 16, x0 + 454, y0 + 66], fill=WHITE,
-                outline=INK, width=1)
-    d.rectangle([x0 + 448, y0 + 52, x0 + 452, y0 + 64], fill=RED)
-    d.ellipse([x0 + 440, y0 + 62, x0 + 460, y0 + 82], fill=RED)
-    chip(d, x0 + 8, y0 + 6, "COP31: NO DEAL", RED, WHITE, size=10)
-    chip(d, x1 - 108, y0 + 6, "$120BN CUT", WHITE, INK, size=10)
-    panel_box(d, x0, y0, x1, y1)
-    panel_text(d, x0, y0 + 84, x1 - x0, "1  ANTALYA, TURKEY · CLIMATE",
+    ctx.save()
+    ctx.set_source_rgb(*C(52, 110, 170))
+    ctx.arc(x + 57, y + 49, 35, 0, 2 * math.pi)
+    ctx.fill()
+    ctx.set_source_rgb(*C(90, 160, 90))
+    for bx, by, br in ((45, 38, 9), (66, 52, 11), (50, 62, 7)):
+        ctx.arc(x + bx, y + by, br, 0, 2 * math.pi)
+        ctx.fill()
+    ctx.set_source_rgb(*C(120, 175, 100))
+    ctx.arc(x + 72, y + 34, 6, 0, 2 * math.pi)
+    ctx.fill()
+    ctx.restore()
+    # meja summit
+    rect(ctx, x + 130, y + 62, 290, 20, C(122, 84, 52))
+    rect(ctx, x + 130, y + 62, 290, 5, C(146, 104, 66))
+    # 5 delegasi
+    cols = [C(176, 40, 60), C(196, 120, 40), C(150, 90, 170),
+            C(60, 130, 170), C(200, 90, 40)]
+    for i, col in enumerate(cols):
+        dx = x + 160 + i * 52
+        ctx.save()
+        ctx.set_source_rgb(*C(232, 200, 160))
+        ctx.arc(dx, y + 44, 9, 0, 2 * math.pi)
+        ctx.fill()
+        ctx.set_source_rgb(*col)
+        ctx.new_path()
+        ctx.move_to(dx - 12, y + 62)
+        ctx.line_to(dx + 12, y + 62)
+        ctx.line_to(dx + 8, y + 52)
+        ctx.line_to(dx - 8, y + 52)
+        ctx.close_path()
+        ctx.fill()
+        ctx.restore()
+    # termometer kanan
+    ctx.save()
+    ctx.set_source_rgb(*WHITE)
+    ctx.rectangle(x + 448, y + 14, 10, 52)
+    ctx.fill()
+    ctx.set_source_rgb(*RED)
+    ctx.rectangle(x + 450, y + 44, 6, 22)
+    ctx.fill()
+    ctx.arc(x + 453, y + 68, 8, 0, 2 * math.pi)
+    ctx.fill()
+    ctx.restore()
+    w1 = chip(ctx, x + 8, y + 6, "COP31: NO DEAL", 10, RED, WHITE)
+    cw = text_w(ctx, "$120BN CUT", "DejaVu Sans", 10, bold=True) + 12
+    chip(ctx, x + w - 8 - cw, y + 6, "$120BN CUT", 10, WHITE, INK)
+    panel_text(ctx, x, y + 84, w, "1  ANTALYA, TURKEY \u00b7 CLIMATE",
                "COP31 collapses with no deal",
                "Two days of overtime end in failure: the draft never "
                "mentions fossil fuels and the $120bn adaptation target "
                "is dropped.",
-               "IPS / Global Issues, 22 Nov", hsize=15)
+               "IPS / Global Issues, 22 Nov")
+    panel_outline(ctx, x, y, w, 152)
 
 
-def draw_libya(d, x0, y0, x1, y1):
-    d.rectangle([x0, y0, x1, y0 + 84], fill=(206, 216, 224))
-    # sea
-    d.rectangle([x0, y0 + 56, x1, y0 + 84], fill=(158, 180, 196))
-    # R6: capsized corvette redrawn as a WARSHIP — bridge tower with
-    # lit windows, funnel, mast + red ensign, forward gun turret,
-    # tegas stern transom, hull plating seams + waterline stripe.
-    # Same tilt, same panel, same fire-at-waterline + smoke.
-    hull = [(x0 + 130, y0 + 62), (x0 + 330, y0 + 26), (x0 + 368, y0 + 42),
-            (x0 + 345, y0 + 60), (x0 + 165, y0 + 80)]
-    d.polygon(hull, fill=(96, 104, 112))
-    # darker lower strake + red waterline stripe along the bottom edge
-    d.polygon([(x0 + 150, y0 + 70), (x0 + 338, y0 + 52), (x0 + 345, y0 + 60),
-               (x0 + 165, y0 + 80)], fill=(74, 80, 88))
-    d.line([(x0 + 140, y0 + 66), (x0 + 342, y0 + 54)], fill=(150, 60, 45),
-           width=3)
-    # deck edge + bow edge highlight + hull plating seams (follow the list)
-    d.line([(x0 + 130, y0 + 62), (x0 + 330, y0 + 26)], fill=(60, 66, 74),
-           width=2)
-    d.line([(x0 + 330, y0 + 26), (x0 + 368, y0 + 42)], fill=(150, 156, 164),
-           width=2)
-    for sx, sy0, sy1 in ((180, 53, 78), (225, 45, 73), (270, 37, 68),
-                         (310, 30, 64)):
-        d.line([(x0 + sx, y0 + sy0), (x0 + sx + 6, y0 + sy1)],
-               fill=(70, 76, 84), width=1)
-    # rust streaks weeping from the deck edge
-    for rx, ry in ((195, 50), (290, 33)):
-        d.line([(x0 + rx, y0 + ry), (x0 + rx, y0 + ry + 8)],
-               fill=(140, 80, 50), width=2)
-    d.polygon([(x0 + 300, y0 + 36), (x0 + 330, y0 + 26), (x0 + 348, y0 + 42),
-               (x0 + 318, y0 + 48)], fill=(140, 60, 45))
-    # stern transom: thick dark edge + deck rail posts at the low end
-    d.line([(x0 + 130, y0 + 62), (x0 + 165, y0 + 80)], fill=(48, 52, 60),
-           width=4)
-    d.line([(x0 + 140, y0 + 60), (x0 + 140, y0 + 53)], fill=(60, 66, 74),
-           width=2)
-    d.line([(x0 + 156, y0 + 57), (x0 + 156, y0 + 50)], fill=(60, 66, 74),
-           width=2)
-    d.line([(x0 + 138, y0 + 53), (x0 + 158, y0 + 49)], fill=(60, 66, 74),
-           width=2)
-    # bridge tower with lit windows + dark roof band
-    d.rectangle([x0 + 232, y0 + 14, x0 + 282, y0 + 46], fill=(88, 96, 104))
-    d.rectangle([x0 + 232, y0 + 14, x0 + 282, y0 + 19], fill=(66, 72, 80))
-    for wx in (238, 250, 262, 274):
-        d.rectangle([x0 + wx, y0 + 23, x0 + wx + 7, y0 + 30],
-                    fill=(240, 200, 90))
-    d.rectangle([x0 + 238, y0 + 34, x0 + 276, y0 + 42], fill=(70, 76, 84))
-    # funnel aft of the bridge, black cap
-    d.rectangle([x0 + 288, y0 + 24, x0 + 306, y0 + 44], fill=(96, 100, 106))
-    d.rectangle([x0 + 288, y0 + 24, x0 + 306, y0 + 29], fill=(40, 44, 50))
-    # forward gun turret on the foredeck + barrel
-    d.polygon([(x0 + 302, y0 + 32), (x0 + 324, y0 + 28), (x0 + 328, y0 + 20),
-               (x0 + 306, y0 + 24)], fill=(70, 76, 84))
-    d.line([(x0 + 324, y0 + 23), (x0 + 340, y0 + 14)], fill=(60, 66, 74),
-           width=3)
-    # mast on the bridge tower + small red ensign
-    d.line([(x0 + 258, y0 + 14), (x0 + 276, y0 + 1)], fill=(60, 66, 74),
-           width=3)
-    d.polygon([(x0 + 276, y0 + 1), (x0 + 276, y0 + 11), (x0 + 292, y0 + 6)],
-              fill=RED)
-    # fire at the waterline (stern) + smaller fire at the bow waterline
-    flame(d, x0 + 180, y0 + 66, 26, 34)
-    flame(d, x0 + 338, y0 + 60, 14, 22)
-    smoke(d, x0 + 195, y0 + 40, 13, (90, 92, 96))
-    smoke(d, x0 + 336, y0 + 30, 11, (96, 98, 102))
-    # drone silhouette with trail
-    d.ellipse([x0 + 410, y0 + 14, x0 + 424, y0 + 22], fill=(40, 44, 50))
-    d.line([(x0 + 380, y0 + 10), (x0 + 410, y0 + 18)], fill=(120, 126, 132),
-           width=2)
-    # debris + listing wake
-    for dx, dy in ((150, 74), (220, 80), (300, 72), (380, 70)):
-        d.rectangle([x0 + dx, y0 + dy, x0 + dx + 10, y0 + dy + 4],
-                    fill=(70, 76, 84))
-    chip(d, x0 + 8, y0 + 6, "10 INJURED", RED, WHITE, size=10)
-    w1 = chip(d, x0 + 8, y0 + 6, "10 INJURED", RED, WHITE, size=10)
-    chip(d, x0 + 16 + w1, y0 + 6, "SHIP CAPSIZED", WHITE, INK, size=10)
-    panel_box(d, x0, y0, x1, y1)
-    panel_text(d, x0, y0 + 84, x1 - x0, "3  BENGHAZI, LIBYA · WAR AT SEA",
+def mid_libya(ctx):
+    x, y, w = 516, 546, 496
+    rect(ctx, x, y, w, 56, C(206, 216, 224))   # langit
+    rect(ctx, x, y + 56, w, 28, C(158, 180, 196))  # laut
+    # --- kapal korvet miring ~10 derajat, haluan ke kanan ---
+    ctx.save()
+    ctx.translate(x + 250, y + 40)
+    ctx.rotate(-math.radians(10))
+    # lambung bezier halus
+    ctx.set_source_rgb(*C(96, 104, 112))
+    ctx.new_path()
+    ctx.move_to(-190, -6)
+    ctx.line_to(170, -6)
+    ctx.curve_to(196, -4, 202, 2, 196, 8)
+    ctx.curve_to(120, 20, -120, 20, -178, 10)
+    ctx.curve_to(-192, 6, -194, -2, -190, -6)
+    ctx.close_path()
+    ctx.fill()
+    # strake bawah lebih gelap + strip garis air merah
+    ctx.set_source_rgb(*C(74, 80, 88))
+    ctx.new_path()
+    ctx.move_to(-178, 8)
+    ctx.curve_to(-60, 18, 100, 18, 192, 6)
+    ctx.line_to(196, 10)
+    ctx.curve_to(100, 22, -60, 22, -182, 12)
+    ctx.close_path()
+    ctx.fill()
+    ctx.set_source_rgb(*C(150, 60, 45))
+    ctx.rectangle(-188, -2, 380, 4)
+    ctx.fill()
+    # tepi dek highlight + sambungan pelat + guratan karat
+    ctx.set_source_rgba(1, 1, 1, 0.35)
+    ctx.set_line_width(1.5)
+    ctx.move_to(-190, -6)
+    ctx.line_to(170, -6)
+    ctx.stroke()
+    ctx.set_source_rgba(60, 60, 60, 0.5)
+    ctx.set_line_width(1)
+    for px in (-120, -40, 40, 120):
+        ctx.move_to(px, -6)
+        ctx.line_to(px, 8)
+        ctx.stroke()
+    ctx.set_source_rgba(140, 80, 40, 0.6)
+    for px, py in ((-90, 2), (20, 4), (90, 0)):
+        ctx.move_to(px, py)
+        ctx.line_to(px + 14, py + 3)
+        ctx.stroke()
+    # transom buritan + tiang rel
+    ctx.set_source_rgb(*C(60, 64, 70))
+    ctx.rectangle(-196, -10, 8, 20)
+    ctx.fill()
+    ctx.set_line_width(1)
+    ctx.move_to(-196, -10)
+    ctx.line_to(-196, -18)
+    ctx.stroke()
+    # anjungan + 4 jendela menyala + atap gelap
+    ctx.set_source_rgb(*C(88, 96, 104))
+    ctx.rectangle(-30, -34, 70, 28)
+    ctx.fill()
+    ctx.set_source_rgb(*C(60, 64, 70))
+    ctx.rectangle(-30, -38, 70, 5)
+    ctx.fill()
+    for i in range(4):
+        rect(ctx, -22 + i * 16, -28, 9, 7, C(240, 200, 90))
+    # cerobong tutup hitam
+    rect(ctx, 52, -30, 14, 24, C(96, 100, 106))
+    rect(ctx, 52, -34, 14, 5, C(30, 30, 32))
+    # kubah meriam depan + laras
+    ctx.set_source_rgb(*C(88, 96, 104))
+    ctx.arc(140, -6, 12, math.pi, 2 * math.pi)
+    ctx.fill()
+    ctx.set_line_width(4)
+    ctx.move_to(140, -14)
+    ctx.line_to(168, -22)
+    ctx.stroke()
+    # tiang + bendera merah kecil
+    ctx.set_line_width(2)
+    ctx.move_to(10, -38)
+    ctx.line_to(10, -58)
+    ctx.stroke()
+    ctx.set_source_rgb(*RED)
+    ctx.new_path()
+    ctx.move_to(10, -58); ctx.line_to(26, -54); ctx.line_to(10, -50)
+    ctx.close_path(); ctx.fill()
+    ctx.restore()
+    # api di garis air buritan + haluan (kecil), asap di atasnya
+    flame(ctx, x + 70, y + 58, 22, 34, tilt=-0.1)
+    flame(ctx, x + 440, y + 58, 16, 24, tilt=0.1)
+    smoke_column(ctx, [(x + 70, y + 26, 8), (x + 62, y + 12, 9)],
+                 C(46, 46, 50), C(88, 88, 92), alpha=0.5)
+    # drone + jejak kanan atas
+    ctx.save()
+    ctx.set_source_rgb(*C(40, 40, 40))
+    ctx.arc(x + 430, y + 12, 3, 0, 2 * math.pi)
+    ctx.fill()
+    ctx.set_source_rgba(200, 60, 40, 0.8)
+    ctx.set_line_width(1.5)
+    ctx.move_to(x + 430, y + 12)
+    ctx.line_to(x + 470, y + 4)
+    ctx.stroke()
+    ctx.restore()
+    # puing di air
+    for px, py, pr in ((x + 150, y + 68, 3), (x + 300, y + 72, 2),
+                       (x + 380, y + 66, 3)):
+        ctx.save()
+        ctx.set_source_rgb(*C(90, 90, 88))
+        ctx.arc(px, py, pr, 0, 2 * math.pi)
+        ctx.fill()
+        ctx.restore()
+    chip(ctx, x + 8, y + 6, "10 INJURED", 10, RED, WHITE)
+    chip(ctx, x + 108, y + 6, "SHIP CAPSIZED", 10, WHITE, INK)
+    panel_text(ctx, x, y + 84, w, "3  BENGHAZI, LIBYA \u00b7 WAR AT SEA",
                "Russian warship struck in Libya",
                "Suspected Ukrainian sea drones hit the corvette Merkury. "
-               "The ship is badly damaged and capsizes; Kyiv and Moscow "
-               "silent.",
-               "AP / Reuters / BBC Verify, 22 Nov", hsize=15)
+               "The ship is badly damaged and capsizes; Kyiv and Moscow silent.",
+               "AP / Reuters / BBC Verify, 22 Nov")
+    panel_outline(ctx, x, y, w, 152)
 
 
-def draw_kyiv(d, x0, y0, x1, y1):
-    # dark night panel: image 56px, text 80px
-    d.rectangle([x0, y0, x1, y0 + 56], fill=(13, 30, 51))
-    rnd = random.Random(4)
+def sec_kyiv(ctx):
+    x, y, w = 12, 702, 244
+    rect(ctx, x, y, w, 52, C(13, 30, 51))
+    rng = random.Random(4)
     for _ in range(14):
-        sx = rnd.randint(x0 + 6, x1 - 6)
-        sy = rnd.randint(y0 + 4, y0 + 20)
-        d.ellipse([sx - 1, sy - 1, sx + 1, sy + 1], fill=(220, 228, 240))
-    # apartment block, 5 storeys, some windows lit
-    d.rectangle([x0 + 60, y0 + 16, x0 + 150, y0 + 56], fill=(26, 40, 60))
+        ctx.save()
+        ctx.set_source_rgb(*C(220, 228, 240))
+        ctx.arc(x + rng.uniform(6, w - 6), y + rng.uniform(4, 50),
+                rng.uniform(0.8, 1.6), 0, 2 * math.pi)
+        ctx.fill()
+        ctx.restore()
+    # blok apartemen + jendela 4x4 (~1/3 menyala)
+    rect(ctx, x + 60, y + 14, 90, 38, C(26, 40, 60))
+    lit = [(0, 0), (2, 1), (1, 2), (3, 2), (0, 3), (2, 3)]
     for r in range(4):
         for c in range(4):
-            wx, wy = x0 + 68 + c * 21, y0 + 20 + r * 9
-            col = (240, 200, 90) if (r * 4 + c) % 3 else (52, 66, 88)
-            d.rectangle([wx, wy, wx + 11, wy + 6], fill=col)
-    # fire + smoke eating the right side of the block
-    flame(d, x0 + 168, y0 + 56, 22, 40)
-    smoke(d, x0 + 175, y0 + 22, 12, (60, 60, 64))
-    # drone with red trail above
-    d.ellipse([x0 + 200, y0 + 10, x0 + 210, y0 + 16], fill=(230, 230, 230))
-    d.line([(x0 + 176, y0 + 8), (x0 + 200, y0 + 13)], fill=(220, 80, 60),
-           width=2)
-    chip(d, x0 + 6, y0 + 5, "2 KILLED", RED, WHITE, size=9)
-    panel_box(d, x0, y0, x1, y1)
-    panel_text(d, x0, y0 + 56, x1 - x0, "4  DYMER, UKRAINE · WAR",
+            col = C(240, 200, 90) if (c, r) in lit else C(60, 74, 96)
+            rect(ctx, x + 66 + c * 20, y + 18 + r * 9, 12, 6, col)
+    # api + asap di sisi kanan blok
+    flame(ctx, x + 152, y + 52, 20, 30, tilt=0.1)
+    smoke_column(ctx, [(x + 152, y + 24, 7), (x + 146, y + 10, 8)],
+                 C(46, 46, 50), C(88, 88, 92), alpha=0.5)
+    # drone + jejak merah kanan atas
+    ctx.save()
+    ctx.set_source_rgb(*C(220, 220, 220))
+    ctx.arc(x + 210, y + 12, 3, 0, 2 * math.pi)
+    ctx.fill()
+    ctx.set_source_rgba(200, 60, 40, 0.8)
+    ctx.set_line_width(1.5)
+    ctx.move_to(x + 210, y + 12)
+    ctx.line_to(x + 232, y + 6)
+    ctx.stroke()
+    ctx.restore()
+    chip(ctx, x + 8, y + 6, "2 KILLED", 9, RED, WHITE)
+    panel_text(ctx, x, y + 52, w, "4  DYMER, UKRAINE \u00b7 WAR",
                "Drone hits Kyiv apartment block",
                "Russian drone strikes a 5-storey block in Dymer. 2 dead, "
                "11 missing, among them 2 children.",
-               "Al Jazeera / AP, 22 Nov", hsize=13, dsize=9)
+               "Al Jazeera / AP, 22 Nov", hsize=12, dsize=9)
+    panel_outline(ctx, x, y, w, 136)
 
 
-def draw_mercury(d, x0, y0, x1, y1):
-    d.rectangle([x0, y0, x1, y0 + 56], fill=(232, 228, 214))
-    # cratered Mercury, big at right, with a thin orbit ring
-    cx, cy, r = x0 + 178, y0 + 30, 26
-    d.ellipse([cx - 42, cy - 10, cx + 42, cy + 10], outline=(150, 144, 130),
-              width=1)
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(168, 162, 150))
-    for ox, oy, cr in ((-8, -8, 6), (8, 4, 8), (-2, 12, 5), (12, -10, 4),
-                       (-14, 6, 4)):
-        d.ellipse([cx + ox - cr, cy + oy - cr, cx + ox + cr, cy + oy + cr],
-                  fill=(138, 132, 120))
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(120, 114, 102),
-              width=1)
-    # probe with gold solar panels at left
-    d.rectangle([x0 + 30, y0 + 22, x0 + 52, y0 + 38], fill=(200, 160, 60))
-    d.rectangle([x0 + 14, y0 + 26, x0 + 30, y0 + 34], fill=(60, 90, 140))
-    d.rectangle([x0 + 52, y0 + 26, x0 + 68, y0 + 34], fill=(60, 90, 140))
-    d.line([(x0 + 68, y0 + 30), (cx - r - 2, cy)], fill=(120, 114, 102),
-           width=1)
-    # stars on the pale sky
-    for sx, sy in ((90, 12), (120, 20), (100, 44), (140, 10)):
-        d.ellipse([x0 + sx - 1, y0 + sy - 1, x0 + sx + 1, y0 + sy + 1],
-                  fill=(120, 110, 95))
-    chip(d, x0 + 6, y0 + 5, "2ND EVER", RED, WHITE, size=9)
-    panel_box(d, x0, y0, x1, y1)
-    panel_text(d, x0, y0 + 56, x1 - x0, "6  SPACE · MERCURY",
+def sec_mercury(ctx):
+    x, y, w = 264, 702, 244
+    rect(ctx, x, y, w, 52, C(232, 228, 214))
+    # cincin orbit elips tipis
+    ctx.save()
+    ctx.set_source_rgba(120, 110, 90, 0.7)
+    ctx.set_line_width(1)
+    ctx.save()
+    ctx.translate(x + 178, y + 26)
+    ctx.scale(1.6, 0.55)
+    ctx.arc(0, 0, 34, 0, 2 * math.pi)
+    ctx.stroke()
+    ctx.restore()
+    # planet berkawah
+    ctx.set_source_rgb(*C(168, 162, 150))
+    ctx.arc(x + 178, y + 26, 26, 0, 2 * math.pi)
+    ctx.fill()
+    ctx.set_source_rgb(*C(138, 132, 120))
+    for kx, ky, kr in ((168, 18, 5), (188, 30, 6), (176, 38, 4),
+                       (190, 14, 3), (166, 30, 3)):
+        ctx.arc(x + kx, y + ky, kr, 0, 2 * math.pi)
+        ctx.fill()
+    ctx.restore()
+    # probe kiri: badan emas + panel surya biru + garis
+    ctx.save()
+    ctx.set_source_rgb(*C(60, 90, 140))
+    ctx.rectangle(x + 12, y + 22, 26, 12)
+    ctx.fill()
+    ctx.set_source_rgb(*C(200, 160, 60))
+    ctx.rectangle(x + 40, y + 20, 18, 16)
+    ctx.fill()
+    ctx.set_source_rgba(60, 60, 60, 0.8)
+    ctx.set_line_width(1)
+    ctx.move_to(x + 58, y + 28)
+    ctx.line_to(x + 152, y + 30)
+    ctx.stroke()
+    ctx.set_source_rgb(*C(120, 110, 90))
+    for sx, sy in ((30, 8), (90, 44), (120, 10)):
+        ctx.arc(x + sx, y + sy, 1.2, 0, 2 * math.pi)
+        ctx.fill()
+    ctx.restore()
+    chip(ctx, x + 8, y + 6, "2ND EVER", 9, RED, WHITE)
+    panel_text(ctx, x, y + 52, w, "6  SPACE \u00b7 MERCURY",
                "BepiColombo enters Mercury orbit",
                "The ESA-JAXA probe becomes only the second mission to "
                "orbit Mercury, on 21 Nov.",
-               "Reported 23 Nov", hsize=13, dsize=9)
+               "Reported 23 Nov", hsize=12, dsize=9)
+    panel_outline(ctx, x, y, w, 136)
 
 
-def draw_markets(d, x0, y0, x1, y1):
-    d.rectangle([x0, y0, x1, y0 + 56], fill=(244, 242, 236))
-    # big board with a plunging red line
-    d.rectangle([x0 + 10, y0 + 8, x0 + 150, y0 + 48], fill=WHITE,
-                outline=LINE, width=1)
-    pts = [(x0 + 16, y0 + 14), (x0 + 46, y0 + 18), (x0 + 76, y0 + 16),
-           (x0 + 106, y0 + 30), (x0 + 136, y0 + 44)]
-    d.line(pts, fill=RED, width=3)
-    d.polygon([(x0 + 136, y0 + 44), (x0 + 126, y0 + 40), (x0 + 132, y0 + 50)],
-              fill=RED)
-    # red ticker bars at right
-    for i, h in enumerate((10, 16, 8, 20, 12)):
-        d.rectangle([x0 + 168 + i * 14, y0 + 40 - h, x0 + 178 + i * 14,
-                     y0 + 40], fill=RED)
-    d.rectangle([x0 + 168, y0 + 44, x0 + 234, y0 + 48], fill=(60, 60, 60))
-    # traders, heads down at the bottom
-    for i, c in enumerate(((40, 60, 90), (90, 90, 90), (140, 50, 60))):
-        cx = x0 + 60 + i * 55
-        d.ellipse([cx - 7, y0 + 42, cx + 7, y0 + 54], fill=(232, 200, 160))
-        d.polygon([(cx - 11, y0 + 56), (cx - 7, y0 + 50), (cx + 7, y0 + 50),
-                   (cx + 11, y0 + 56)], fill=c)
-    chip(d, x0 + 6, y0 + 5, "-17.5%", RED, WHITE, size=9)
-    panel_box(d, x0, y0, x1, y1)
-    panel_text(d, x0, y0 + 56, x1 - x0, "7  TAIPEI · MARKETS",
+def sec_bursa(ctx):
+    x, y, w = 516, 702, 244
+    rect(ctx, x, y, w, 52, C(244, 242, 236))
+    # papan putih + garis merah jatuh + kepala panah
+    rect(ctx, x + 10, y + 8, 140, 40, WHITE)
+    ctx.save()
+    ctx.set_source_rgb(*RED)
+    ctx.set_line_width(3)
+    ctx.move_to(x + 16, y + 14)
+    ctx.line_to(x + 60, y + 26)
+    ctx.line_to(x + 100, y + 22)
+    ctx.line_to(x + 138, y + 42)
+    ctx.stroke()
+    ctx.new_path()
+    ctx.move_to(x + 138, y + 42); ctx.line_to(x + 126, y + 36)
+    ctx.line_to(x + 128, y + 46)
+    ctx.close_path(); ctx.fill()
+    ctx.restore()
+    # 5 batang ticker merah kanan
+    for i, bh in enumerate((10, 16, 8, 20, 12)):
+        rect(ctx, x + 160 + i * 15, y + 44 - bh, 10, bh, RED)
+    # 3 trader menunduk
+    for i, tx in enumerate((40, 110, 180)):
+        ctx.save()
+        ctx.set_source_rgb(*C(232, 200, 160))
+        ctx.arc(x + tx, y + 46, 5, 0, 2 * math.pi)
+        ctx.fill()
+        ctx.set_source_rgb(*C(60, 60, 70))
+        ctx.new_path()
+        ctx.move_to(x + tx - 9, y + 52)
+        ctx.line_to(x + tx + 9, y + 52)
+        ctx.line_to(x + tx + 6, y + 46)
+        ctx.line_to(x + tx - 6, y + 46)
+        ctx.close_path()
+        ctx.fill()
+        ctx.restore()
+    chip(ctx, x + 8, y + 6, "-17.5%", 9, RED, WHITE)
+    panel_text(ctx, x, y + 52, w, "7  TAIPEI \u00b7 MARKETS",
                "Markets plunge; Taiwan bans shorting",
                "US stocks tumble; Taiwan shares fall 17.5% in a week; "
                "short-selling banned from Monday.",
-               "23 Nov", hsize=13, dsize=9)
+               "23 Nov", hsize=12, dsize=9)
+    panel_outline(ctx, x, y, w, 136)
 
 
-def draw_un(d, x0, y0, x1, y1):
-    d.rectangle([x0, y0, x1, y0 + 56], fill=(222, 228, 236))
-    # back wall with the big 128
-    d.rectangle([x0 + 60, y0 + 6, x0 + 184, y0 + 30], fill=NAVY)
-    d.text((x0 + 96, y0 + 8), "128", font=sans_b(20), fill=WHITE)
-    # flags row
-    for i, c in enumerate(((176, 30, 36), (40, 90, 160), (240, 200, 60),
-                           (46, 110, 62), (240, 240, 240), (200, 120, 30),
-                           (120, 60, 140), (60, 140, 140))):
-        fx = x0 + 30 + i * 22
-        d.rectangle([fx, y0 + 34, fx + 12, y0 + 42], fill=c,
-                    outline=(120, 120, 120), width=1)
-    # curved rows of desks + delegates
-    for row, yy in enumerate((44, 50)):
-        for i in range(7):
-            cx = x0 + 24 + i * 32 + row * 4
-            d.rectangle([cx - 9, y0 + yy, cx + 9, y0 + yy + 4],
-                        fill=(150, 120, 80))
-            d.ellipse([cx - 4, y0 + yy - 6, cx + 4, y0 + yy + 2],
-                      fill=(232, 200, 160))
-    chip(d, x0 + 6, y0 + 5, "128 NATIONS", RED, WHITE, size=9)
-    panel_box(d, x0, y0, x1, y1)
-    panel_text(d, x0, y0 + 56, x1 - x0, "9  UNITED NATIONS · ARMS",
+def sec_pbb(ctx):
+    x, y, w = 768, 702, 244
+    rect(ctx, x, y, w, 52, C(222, 228, 236))
+    # dinding navy + angka 128
+    rect(ctx, x + 60, y + 6, 124, 24, NAVY)
+    draw_text(ctx, x + 122, y + 8, "128", "DejaVu Sans", 20, WHITE,
+              bold=True, align="center")
+    # deret 8 bendera kecil
+    fcols = [C(176, 40, 60), C(40, 90, 160), C(240, 200, 90),
+             C(46, 110, 62), C(150, 90, 170), C(200, 90, 40),
+             C(60, 130, 170), C(196, 120, 40)]
+    for i, col in enumerate(fcols):
+        rect(ctx, x + 60 + i * 16, y + 34, 12, 8, col)
+    # baris melengkung meja + kepala delegasi
+    ctx.save()
+    ctx.set_source_rgb(*C(150, 120, 80))
+    ctx.new_path()
+    ctx.move_to(x + 20, y + 52)
+    ctx.curve_to(x + 80, y + 42, x + 170, y + 42, x + 224, y + 52)
+    ctx.line_to(x + 224, y + 52)
+    ctx.line_to(x + 20, y + 52)
+    ctx.close_path()
+    ctx.fill()
+    ctx.set_source_rgb(*C(232, 200, 160))
+    for hx in (70, 122, 174):
+        ctx.arc(x + hx, y + 42, 5, 0, 2 * math.pi)
+        ctx.fill()
+    ctx.restore()
+    chip(ctx, x + 8, y + 6, "128 NATIONS", 9, RED, WHITE)
+    panel_text(ctx, x, y + 52, w, "9  UNITED NATIONS \u00b7 ARMS",
                "128 nations back killer-robot rules",
                "At a UN conference, 128 countries agree to pursue rules "
                "on autonomous weapons by 2028.",
-               "23 Nov", hsize=13, dsize=9)
+               "23 Nov", hsize=12, dsize=9)
+    panel_outline(ctx, x, y, w, 136)
 
 
-# ---------------------------------------------------------------- bottom band
-LAND = [
-    (-100, 50, 28, 16), (-95, 32, 20, 10), (-85, 18, 9, 7),
-    (-150, 64, 12, 7), (-42, 73, 9, 5),
-    (-60, -8, 13, 13), (-66, -28, 8, 11),
-    (14, 6, 19, 16), (20, -20, 13, 11), (44, 4, 8, 7),
-    (10, 50, 16, 9), (38, 54, 22, 11), (75, 56, 28, 12),
-    (100, 42, 16, 9), (78, 21, 11, 9), (104, 14, 9, 7),
-    (113, 33, 11, 7), (139, 37, 5, 7), (128, -24, 13, 7),
-    (172, -41, 4, 3), (100, -2, 7, 5), (44, 24, 7, 5), (-2, 54, 3, 4),
-]
+LAND = [(-100, 50, 28, 16), (-95, 32, 20, 10), (-85, 18, 9, 7),
+        (-150, 64, 12, 7), (-42, 73, 9, 5), (-60, -8, 13, 13),
+        (-66, -28, 8, 11), (14, 6, 19, 16), (20, -20, 13, 11),
+        (44, 4, 8, 7), (10, 50, 16, 9), (38, 54, 22, 11),
+        (75, 56, 28, 12), (100, 42, 16, 9), (78, 21, 11, 9),
+        (104, 14, 9, 7), (113, 33, 11, 7), (139, 37, 5, 7),
+        (128, -24, 13, 7), (172, -41, 4, 3), (100, -2, 7, 5),
+        (44, 24, 7, 5), (-2, 54, 3, 4)]
 
-PINS = [  # (number, lon, lat, nudge_x, nudge_y)
-    (1, 30.7, 36.9, 5, -3),
-    (2, 56.2, 26.5, 0, 0),
-    (3, 20.1, 32.1, -6, 4),
-    (4, 30.5, 50.4, -8, -8),
-    (7, 121.0, 23.7, 0, 0),
-    (9, -74.0, 40.7, 0, 0),
-]
+PINS = [(1, 30.7, 36.9, 5, -3), (2, 56.2, 26.5, 0, 0),
+        (3, 20.1, 32.1, -6, 4), (4, 30.5, 50.4, -8, -8),
+        (7, 121.0, 23.7, 0, 0), (9, -74.0, 40.7, 0, 0)]
 
 ALSO_ON = [
     (5, "Poland: debris was Russian missiles (23 Nov)"),
@@ -604,94 +838,115 @@ ALSO_ON = [
 ]
 
 
-def draw_map(d, x0, y0, x1, y1):
-    w, h = x1 - x0, y1 - y0
+def project(lon, lat):
+    return (12 + (lon + 168) / 360.0 * 300,
+            868 + (75 - lat) / 130.0 * 118)
 
-    def px(lon):
-        return x0 + (lon + 168.0) / 360.0 * w
 
-    def py(lat):
-        return y0 + (75.0 - lat) / 130.0 * h
+def in_land(px, py):
+    for lon, lat, rx, ry in LAND:
+        cx, cy = project(lon, lat)
+        sx = (300.0 / 360.0) * rx
+        sy = (118.0 / 130.0) * ry
+        if ((px - cx) / sx) ** 2 + ((py - cy) / sy) ** 2 <= 1:
+            return True
+    return False
 
-    step = 5
-    yy = y0 + 3
-    while yy < y1 - 2:
-        xx = x0 + 3
-        while xx < x1 - 2:
-            lon = (xx - x0) / w * 360.0 - 168.0
-            lat = 75.0 - (yy - y0) / h * 130.0
-            for clon, clat, rx, ry in LAND:
-                if ((lon - clon) / rx) ** 2 + ((lat - clat) / ry) ** 2 <= 1:
-                    d.ellipse([xx - 1.5, yy - 1.5, xx + 1.5, yy + 1.5],
-                              fill=(169, 143, 95))
-                    break
-            xx += step
-        yy += step
-    f = sans_b(8)
+
+def bottom_band(ctx):
+    draw_text(ctx, 12, 842, "WHERE IT HAPPENED", "DejaVu Sans", 11, INK,
+              bold=True)
+    draw_text(ctx, 12, 855, "pins match story numbers", "DejaVu Sans", 8,
+              GREY)
+    draw_text(ctx, 324, 842, "ALSO ON MONDAY 23 NOVEMBER \u2014 28 MORE STORIES",
+              "DejaVu Sans", 11, INK, bold=True)
+    # peta dotted: grid 5px, titik hanya di daratan
+    ctx.save()
+    ctx.set_source_rgb(*C(169, 143, 95))
+    gx, gy = 12, 868
+    while gy <= 986:
+        px = gx
+        while px <= 312:
+            if in_land(px, gy):
+                ctx.arc(px, gy, 1.5, 0, 2 * math.pi)
+                ctx.fill()
+            px += 5
+        gy += 5
+    ctx.restore()
+    # 6 pin bernomor
     for num, lon, lat, nx, ny in PINS:
-        cx, cy = px(lon) + nx, py(lat) + ny
-        d.ellipse([cx - 7, cy - 7, cx + 7, cy + 7], fill=RED,
-                  outline=WHITE, width=1)
-        t = str(num)
-        d.text((cx - f.getlength(t) / 2, cy - 6), t, font=f, fill=WHITE)
+        px, py = project(lon, lat)
+        px += nx
+        py += ny
+        ctx.save()
+        ctx.set_source_rgb(*RED)
+        ctx.arc(px, py, 7, 0, 2 * math.pi)
+        ctx.fill()
+        ctx.set_source_rgb(*WHITE)
+        ctx.set_line_width(1)
+        ctx.arc(px, py, 7, 0, 2 * math.pi)
+        ctx.stroke()
+        ctx.restore()
+        draw_text(ctx, px, py - 5.5, str(num), "DejaVu Sans", 8, WHITE,
+                  bold=True, align="center")
+    # ALSO ON: 2 kolom x 14 baris
+    for i, (num, txt) in enumerate(ALSO_ON):
+        col = 0 if i < 14 else 1
+        row = i % 14
+        bx = 324 if col == 0 else 672
+        by = 860 + row * 9
+        draw_text(ctx, bx, by, str(num), "DejaVu Sans", 8, RED, bold=True)
+        draw_text(ctx, bx + 18, by, txt, "DejaVu Sans", 8, DEK)
 
 
-def draw_bottom(d):
-    d.text((12, 842), "WHERE IT HAPPENED", font=sans_b(11), fill=INK)
-    d.text((12, 855), "pins match story numbers", font=sans(8), fill=GREY)
-    d.text((324, 842), "ALSO ON MONDAY 23 NOVEMBER — 28 MORE STORIES",
-           font=sans_b(11), fill=INK)
-    draw_map(d, 12, 868, 312, 986)
-    # ALSO ON, two columns of 14
-    for col in range(2):
-        cx = 324 + col * 348
-        for row in range(14):
-            num, txt = ALSO_ON[col * 14 + row]
-            y = 860 + row * 9
-            d.text((cx, y), str(num), font=sans_b(8), fill=RED)
-            d.text((cx + 18, y), txt, font=sans(8), fill=(52, 48, 40))
-    # DATE CHECK box
-    d.rectangle([12, 990, 1012, 1012], outline=RED, width=1)
-    d.text((18, 992),
-           "Every story here was reported or still developing on Monday 23 "
-           "November 2026, in at least one time zone.",
-           font=sans(8), fill=INK)
-    d.text((18, 1002),
-           "DATE CHECK — Left out: 'El Chapo Isidro' captured (20 Nov) · "
-           "Huang return ruled out (21 Nov) · EU–Indonesia deal signed "
-           "(21 Nov) · Ronaldo 986 goals (21 Nov) · Shenzhen summit "
-           "(19 Nov) · Palisades arsonist convicted (20 Nov).",
-           font=sans(8), fill=INK)
-    # footer
-    d.text((12, 1015),
-           "Sources: Reuters · AP · AFP · BBC · Al Jazeera · IPS · "
-           "OilPrice · ATP · MotoGP · Dawn · IQAir · KCNA · Sky Sports",
-           font=sans(8), fill=GREY)
-    ft = "quick-lynx-56 · make.fun"
-    f = sans(8)
-    d.text((1012 - f.getlength(ft), 1015), ft, font=f, fill=GREY)
+def date_check_footer(ctx):
+    ctx.save()
+    ctx.set_source_rgb(*RED)
+    ctx.set_line_width(1)
+    ctx.rectangle(12.5, 990.5, 1000, 22)
+    ctx.stroke()
+    ctx.restore()
+    draw_text(ctx, 12, 992,
+              "Every story here was reported or still developing on Monday "
+              "23 November 2026, in at least one time zone.",
+              "DejaVu Sans", 8, INK)
+    draw_text(ctx, 12, 1002,
+              "DATE CHECK \u2014 Left out: 'El Chapo Isidro' captured (20 Nov) "
+              "\u00b7 Huang return ruled out (21 Nov) \u00b7 EU\u2013Indonesia deal "
+              "signed (21 Nov) \u00b7 Ronaldo 986 goals (21 Nov) \u00b7 Shenzhen "
+              "summit (19 Nov) \u00b7 Palisades arsonist convicted (20 Nov).",
+              "DejaVu Sans", 8, INK)
+    draw_text(ctx, 12, 1014,
+              "Sources: Reuters \u00b7 AP \u00b7 AFP \u00b7 BBC \u00b7 Al Jazeera "
+              "\u00b7 IPS \u00b7 OilPrice \u00b7 ATP \u00b7 MotoGP \u00b7 Dawn "
+              "\u00b7 IQAir \u00b7 KCNA \u00b7 Sky Sports",
+              "DejaVu Sans", 8, GREY)
+    draw_text(ctx, 1012, 1014, "quick-lynx-56 \u00b7 make.fun",
+              "DejaVu Sans", 8, GREY, align="right")
 
 
 def build():
-    img = Image.new("RGB", (W, H), CREAM)
-    d = ImageDraw.Draw(img)
-    draw_masthead(d)
-    draw_date(d)
-    draw_stats(d)
-    draw_region_bar(d)
-    draw_hero(img, d)
-    d = ImageDraw.Draw(img)
-    draw_cop31(d, 12, 546, 508, 698)
-    draw_libya(d, 516, 546, 1012, 698)
-    draw_kyiv(d, 12, 702, 256, 838)
-    draw_mercury(d, 264, 702, 508, 838)
-    draw_markets(d, 516, 702, 760, 838)
-    draw_un(d, 768, 702, 1012, 838)
-    draw_bottom(d)
-    img.save(OUT, format="PNG", optimize=True)
-    return OUT
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
+    ctx = cairo.Context(surf)
+    ctx.set_source_rgb(*CREAM)
+    ctx.paint()
+    masthead(ctx)
+    date_block(ctx)
+    stat_strip(ctx)
+    region_bar(ctx)
+    hero(ctx)
+    hero_text(ctx)
+    mid_cop31(ctx)
+    mid_libya(ctx)
+    sec_kyiv(ctx)
+    sec_mercury(ctx)
+    sec_bursa(ctx)
+    sec_pbb(ctx)
+    bottom_band(ctx)
+    date_check_footer(ctx)
+    surf.write_to_png("entry.png")
+    print("wrote entry.png")
 
 
 if __name__ == "__main__":
-    p = build()
-    print(p, os.path.getsize(p), "bytes")
+    build()
