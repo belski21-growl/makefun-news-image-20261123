@@ -1,84 +1,98 @@
 #!/usr/bin/env python3
-"""news-image-20261123 (Cairo renderer) — copy entry.png to output dir.
+"""news-image-20261123 (ronde 4 + polish Goldfish: plume asap tebal,
+kubah ranjau dihapus, bahu baris belakang COP31) — salin entry.png ke
+direktori output.
 
-Stdlib only. Verifies size <= 1 MiB + SHA-256 + SOI/EOI BEFORE and AFTER
-the chunked copy (64 KiB chunks). Samefile + output-dir guards.
+Stdlib saja. Memeriksa ukuran (<= 1 MiB), SHA-256, dan penanda PNG
+(SOI/EOI) SEBELUM dan SESUDAH penyalinan bertahap (chunk 64 KiB).
+Menolak bila direktori output tidak diset / tidak ada, dan bila sumber
+dan tujuan adalah file yang sama.
 """
 import hashlib
 import os
 import sys
 
-EXPECTED_SHA256 = "a311a7b6df4b0ecf592c85899ff4b28bb99122fa32ccc968fd09c8f1a357ce4c"
-EXPECTED_SIZE = 280568
-MAX_SIZE = 1048576
-CHUNK = 65536
+EXPECTED_SHA256 = "19b5998efe8546270e84f36a4956ab8994c89a062a7cac614d3caece7106ace0"
+EXPECTED_SIZE = 312655
+MAX_BYTES = 1048576
+BLOCK = 65536
+PNG_HEAD = b"\x89\x50"
+PNG_TAIL = b"\x60\x82"
 
 
-def fail(msg):
-    print("FAIL: " + msg, file=sys.stderr)
+def abort(reason):
+    sys.stderr.write("FAIL: %s\n" % reason)
     sys.exit(1)
 
 
-def check(path, label):
+def digest_file(path):
+    """Kembalikan (ukuran, sha256, 2 byte awal, 2 byte akhir)."""
     try:
-        size = os.path.getsize(path)
-    except OSError as e:
-        fail(label + ": cannot stat: " + str(e))
-    if size > MAX_SIZE:
-        fail(label + ": size %d > 1 MiB" % size)
-    h = hashlib.sha256()
+        total = os.path.getsize(path)
+    except OSError as exc:
+        abort("cannot stat %s: %s" % (path, exc))
+    sha = hashlib.sha256()
     try:
-        with open(path, "rb") as f:
-            head = f.read(2)
-            f.seek(0)
+        with open(path, "rb") as handle:
+            head = handle.read(2)
+            handle.seek(0)
             while True:
-                data = f.read(CHUNK)
-                if not data:
+                block = handle.read(BLOCK)
+                if not block:
                     break
-                h.update(data)
-            f.seek(-2, os.SEEK_END)
-            tail = f.read(2)
-    except OSError as e:
-        fail(label + ": cannot read: " + str(e))
-    if head != b"\x89\x50":
-        fail(label + ": bad SOI marker")
-    if tail != b"\x60\x82":
-        fail(label + ": bad EOI marker")
-    digest = h.hexdigest()
+                sha.update(block)
+            handle.seek(-2, os.SEEK_END)
+            tail = handle.read(2)
+    except OSError as exc:
+        abort("cannot read %s: %s" % (path, exc))
+    return total, sha.hexdigest(), head, tail
+
+
+def verify(path, which):
+    total, digest, head, tail = digest_file(path)
+    if total > MAX_BYTES:
+        abort("%s: size %d > 1 MiB" % (which, total))
+    if total != EXPECTED_SIZE:
+        abort("%s: size %d != expected %d" % (which, total, EXPECTED_SIZE))
     if digest != EXPECTED_SHA256:
-        fail(label + ": sha256 mismatch: " + digest)
-    if size != EXPECTED_SIZE:
-        fail(label + ": size mismatch: %d != %d" % (size, EXPECTED_SIZE))
-    return size
+        abort("%s: sha256 mismatch: %s" % (which, digest))
+    if head != PNG_HEAD:
+        abort("%s: bad SOI marker" % which)
+    if tail != PNG_TAIL:
+        abort("%s: bad EOI marker" % which)
 
 
-def main():
-    src = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       "entry.png")
+def run():
+    here = os.path.dirname(os.path.abspath(__file__))
+    src = os.path.join(here, "entry.png")
     out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "")
     if not out_dir:
-        fail("MAKEFUN_OUTPUT_DIR is not set")
+        abort("MAKEFUN_OUTPUT_DIR is not set")
     if not os.path.isdir(out_dir):
-        fail("output dir does not exist: " + out_dir)
+        abort("output dir does not exist: " + out_dir)
     dst = os.path.join(out_dir, "entry.png")
     if os.path.abspath(src) == os.path.abspath(dst):
-        fail("source and destination are the same file")
-    if os.path.exists(dst) and os.path.samefile(src, dst):
-        fail("source and destination are the same file")
-    check(src, "source")
+        abort("source and destination are the same file")
+    if os.path.exists(dst):
+        try:
+            if os.path.samefile(src, dst):
+                abort("source and destination are the same file")
+        except OSError as exc:
+            abort("samefile check failed: %s" % exc)
+    verify(src, "source")
     try:
         with open(src, "rb") as fin, open(dst, "wb") as fout:
             while True:
-                data = fin.read(CHUNK)
-                if not data:
+                block = fin.read(BLOCK)
+                if not block:
                     break
-                fout.write(data)
-    except OSError as e:
-        fail("copy failed: " + str(e))
-    check(dst, "output")
-    print("OK: entry.png (%d bytes, sha256 %s)" % (EXPECTED_SIZE,
-                                                   EXPECTED_SHA256))
+                fout.write(block)
+    except OSError as exc:
+        abort("copy failed: %s" % exc)
+    verify(dst, "output")
+    print("OK: entry.png (%d bytes, sha256 %s)"
+          % (EXPECTED_SIZE, EXPECTED_SHA256))
 
 
 if __name__ == "__main__":
-    main()
+    run()
